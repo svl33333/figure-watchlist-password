@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#102040">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<title>フィギュア・ウォッチリスト｜パスワード保護</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;color:#17253f;background:#eff2f8}
+*{box-sizing:border-box}
+body{min-height:100vh;margin:0;display:grid;place-items:center;padding:22px}
+main{width:min(440px,100%);background:#fff;border-radius:24px;box-shadow:0 20px 64px #1227471b;padding:30px 25px}
+.lock{font-size:27px;margin:0}
+h1{font-size:24px;line-height:1.4;margin:13px 0 11px}
+p{color:#66758d;line-height:1.75;font-size:13px;margin:10px 0 20px}
+label{display:block;font-size:13px;font-weight:700;margin-bottom:8px}
+input{width:100%;padding:14px 13px;border-radius:12px;border:1px solid #b8c5d8;font-size:16px;color:#152138;background:#fff}
+button{border:0;width:100%;border-radius:12px;background:#2256b5;color:white;font-size:15px;font-weight:750;padding:14px 12px;margin-top:14px;cursor:pointer}
+button:disabled{opacity:.6;cursor:wait}
+small{display:block;color:#748096;line-height:1.6;margin-top:18px;font-size:11px}
+#error{color:#a62b34;font-size:13px;min-height:22px;margin-top:9px}
+@media(prefers-color-scheme:dark){:root{color:#eff4ff;background:#101626}main{background:#1b2640}p,small{color:#b0bfd7}label{color:#e8f1ff}input{background:#172038;color:#fff;border-color:#50617f}}
+</style>
+</head>
+<body>
+<main>
+  <div class="lock" aria-hidden="true">🔒</div>
+  <h1>フィギュア・ウォッチリスト</h1>
+  <p>この一覧はパスワードで暗号化されています。内容は正しいパスワードを入力した端末上でのみ復号されます。</p>
+  <form id="authForm">
+    <label for="watchPassword">閲覧パスワード</label>
+    <input id="watchPassword" type="password" autocomplete="current-password" required minlength="1" spellcheck="false">
+    <button id="submit" type="submit">一覧を開く</button>
+    <div id="error" role="alert" aria-live="polite"></div>
+  </form>
+  <small>暗号化されたデータは公開サーバーに置かれていますが、閲覧パスワードはサーバーに送信されません。次回も閲覧時にパスワードが必要です。</small>
+</main>
+<script>
+"use strict";
+const form=document.querySelector("#authForm");
+const box=document.querySelector("#error");
+const submit=document.querySelector("#submit");
+function bytes(base64) {
+  const binary=atob(base64);
+  return Uint8Array.from(binary,ch=>ch.charCodeAt(0));
+}
+form.addEventListener("submit",async e=>{
+  e.preventDefault();
+  const password=document.querySelector("#watchPassword").value;
+  box.textContent="";
+  submit.disabled=true;
+  submit.textContent="復号中...";
+  try {
+    if(!globalThis.crypto?.subtle) throw Error("HTTPS・Web Cryptoに非対応のブラウザです");
+    if(typeof DecompressionStream==="undefined") throw Error("ブラウザの圧縮データ復号に対応していません");
+    const r=await fetch("./vault.json",{cache:"no-store"});
+    if(!r.ok) throw Error("暗号化データを取得できません（HTTP "+r.status+"）");
+    const data=await r.json();
+    if(data.version!==1||data.cipher!=="AES-256-GCM"||data.kdf!=="PBKDF2-SHA256")
+      throw Error("不明な暗号形式です");
+    const base=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveKey"]);
+    const key=await crypto.subtle.deriveKey(
+      {name:"PBKDF2",salt:bytes(data.salt),iterations:data.iterations,hash:"SHA-256"},
+      base,{name:"AES-GCM",length:256},false,["decrypt"]);
+    const decrypted=await crypto.subtle.decrypt(
+      {name:"AES-GCM",iv:bytes(data.iv)},key,bytes(data.ciphertext));
+    const stream=new Blob([decrypted]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const html=await new Response(stream).text();
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (err) {
+    box.textContent=err instanceof DOMException && err.name==="OperationError"
+      ?"パスワードが違います。":"開けませんでした："+(err.message||String(err));
+    submit.disabled=false;
+    submit.textContent="一覧を開く";
+  }
+});
+</script>
+</body>
+</html>
